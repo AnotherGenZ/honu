@@ -105,8 +105,37 @@
             }
         },
 
+        created: function(): void {
+            this.loadSearchFromUrl();
+        },
+
         methods: {
+            loadSearchFromUrl: function(): void {
+                const params: URLSearchParams = new URLSearchParams(location.search);
+                const query: string = params.get("q")?.trim() ?? "";
+                if (query.length == 0) {
+                    return;
+                }
+
+                this.name = query;
+                this.search();
+            },
+
+            syncSearchUrl: function(): void {
+                const url = new URL(location.href);
+                const query: string = this.name.trim();
+
+                if (query.length == 0) {
+                    url.searchParams.delete("q");
+                } else {
+                    url.searchParams.set("q", query);
+                }
+
+                history.replaceState({ path: url.href }, "", url.href);
+            },
+
             search: async function(): Promise<void> {
+                this.syncSearchUrl();
                 this.searchName = this.name;
                 this.outfits = Loadable.loading();
                 const l: Loading<PsOutfit[]> = await OutfitApi.searchByName(this.searchName);

@@ -213,15 +213,56 @@
                 searchTimeoutID: -1 as number,
                 pendingSearch: null as Promise<Loading<PsCharacter[]>> | null,
 
+                suppressAutoSearch: false as boolean,
+
                 defaultTime: 978307200000 as number
             }
         },
 
         created: function(): void {
             document.title = `Honu / Character search`;
+            this.loadSearchFromUrl();
         },
 
         methods: {
+            loadSearchFromUrl: function(): void {
+                const params: URLSearchParams = new URLSearchParams(location.search);
+                const query: string = params.get("q")?.trim() ?? "";
+                if (query.length == 0) {
+                    return;
+                }
+
+                const mode: string = (params.get("mode") ?? "partial").toLowerCase();
+                this.suppressAutoSearch = true;
+                this.charName = query;
+                this.$nextTick(() => {
+                    this.suppressAutoSearch = false;
+                });
+
+                if (mode == "exact") {
+                    this.loadExact();
+                } else if (mode == "all") {
+                    this.loadAll();
+                } else {
+                    this.loadPartial();
+                }
+            },
+
+            syncSearchUrl: function(mode: string): void {
+                const url = new URL(location.href);
+                const query: string = this.charName.trim();
+
+                if (query.length == 0) {
+                    url.searchParams.delete("q");
+                    url.searchParams.delete("mode");
+                } else {
+                    url.searchParams.set("q", query);
+                    url.searchParams.set("mode", mode);
+                }
+
+                history.replaceState({ path: url.href }, "", url.href);
+            },
+
             scrollOptions: function(ev: KeyboardEvent): void {
                 if (this.characters.state != "loaded") {
                     return;
@@ -272,6 +313,7 @@
             },
 
             loadPartial: function(): void {
+                this.syncSearchUrl("partial");
                 this.lastSearch = this.charName.toLowerCase();
 
                 this.characters = Loadable.loading();
@@ -287,6 +329,7 @@
             },
 
             loadAll: function(): void {
+                this.syncSearchUrl("all");
                 this.lastSearch = this.charName.toLowerCase();
                 this.characters = Loadable.loading();
 
@@ -306,6 +349,7 @@
             },
 
             loadExact: function(): void {
+                this.syncSearchUrl("exact");
                 this.lastSearch = this.charName.toLowerCase();
                 this.characters = Loadable.loading();
 
@@ -366,11 +410,16 @@
 
         watch: {
             charName: function(): void {
+                if (this.suppressAutoSearch == true) {
+                    return;
+                }
+
                 if (this.pendingSearch != null) {
                     this.pendingSearch = null;
                 }
 
                 if (this.charName.length < 3) {
+                    this.syncSearchUrl("partial");
                     this.characters = Loadable.nocontent();
                     return;
                 }
@@ -382,6 +431,7 @@
                 this.searchTimeoutID = setTimeout(() => {
                     this.characters = Loadable.loading();
                     this.lastSearch = savedName;
+                    this.syncSearchUrl("partial");
 
                     CharacterApi.searchByName(savedName).then((data: Loading<PsCharacter[]>) => {
                         if (data.state == "loaded") {
