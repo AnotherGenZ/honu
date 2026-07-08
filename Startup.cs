@@ -196,6 +196,8 @@ namespace watchtower {
 
                         return CookieAuthenticationDefaults.AuthenticationScheme;
                     };
+
+                    options.ForwardChallenge = GoogleDefaults.AuthenticationScheme;
                 });
 
                 Console.WriteLine($"Added Google auth");
