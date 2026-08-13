@@ -163,6 +163,91 @@ namespace watchtower.Controllers {
         }
 
         /// <summary>
+        ///     get the kills and deaths of a list of characters between a time period. see remarks for more info
+        /// </summary>
+        /// <remarks>
+        ///     gets the kills and deaths (including revived deaths). includes team kills and team deaths. 
+        ///     the filter period is exclusive on BOTH ends.
+        /// </remarks>
+        /// <param name="charIDs">list of character IDs to include. max 50</param>
+        /// <param name="start">start of the filter period (exclusive)</param>
+        /// <param name="end">end of the filter period (exclusive)</param>
+        /// <param name="includeCharacters">will <see cref="KillDeathBlock.Characters"/> be populated? defauls to false</param>
+        /// <param name="includeWeapons">will <see cref="KillDeathBlock.Weapons"/> be populated? defaults to false</param>
+        /// <param name="includeFireModes">will <see cref="KillDeathBlock.FireModes"/> be populated? defaults to false</param>
+        /// <param name="includeItemCategories">will <see cref="KillDeathBlock.ItemCategories"/> be populated? defaults to false</param>
+        /// <response code="200">
+        ///     the response will contain a <see cref="KillDeathBlock"/>, that contains all of the kills and deaths for the characters
+        ///     specified in <paramref name="charIDs"/> between <paramref name="start"/> and <paramref name="end"/> (exclusive on both ends).
+        ///     optionally, the fields <see cref="KillDeathBlock.Characters"/>, <see cref="KillDeathBlock.Weapons"/>,
+        ///     <see cref="KillDeathBlock.FireModes"/>, and <see cref="KillDeathBlock.ItemCategories"/> will be populated
+        ///     depending on what <paramref name="includeCharacters"/>, <paramref name="includeWeapons"/>, <paramref name="includeFireModes"/>
+        ///     and <paramref name="includeItemCategories"/> are set to (all default to false)
+        /// </response>
+        [HttpGet("characters")]
+        public async Task<ApiResponse<KillDeathBlock>> GetByCharacterIDsAndPeriod(
+            [FromQuery] List<string> charIDs,
+            [FromQuery] DateTime start,
+            [FromQuery] DateTime end,
+            [FromQuery] bool? includeCharacters = false,
+            [FromQuery] bool? includeWeapons = false,
+            [FromQuery] bool? includeFireModes = false,
+            [FromQuery] bool? includeItemCategories = false
+        ) {
+
+            if (charIDs.Count == 0) {
+                return ApiBadRequest<KillDeathBlock>($"{nameof(charIDs)} must have at least 1 entry");
+            }
+            if (charIDs.Count > 50) {
+                return ApiBadRequest<KillDeathBlock>($"{nameof(charIDs)} cannot have more than 50 entries");
+            }
+
+            if (end - start > TimeSpan.FromDays(1)) {
+                return ApiBadRequest<KillDeathBlock>($"{nameof(start)} and {nameof(end)} cannot have more than a 24 hour difference");
+            }
+            if (start >= end) {
+                return ApiBadRequest<KillDeathBlock>($"{nameof(start)} must come before ${nameof(end)}");
+            }
+
+            using Activity? trace = HonuActivitySource.Root.StartActivity("get chars kills by period");
+            trace?.AddTag("honu.start", start.ToString("u"));
+            trace?.AddTag("honu.end", end.ToString("u"));
+
+            List<KillEvent> events = await _KillDbStore.GetKillsByCharacterIDs(charIDs, start, end);
+
+            KillDeathBlock block = new();
+            block.Kills = events.Where(iter => charIDs.Contains(iter.AttackerCharacterID)).ToList();
+            block.Deaths = events.Where(iter => charIDs.Contains(iter.KilledCharacterID)).ToList();
+
+            // load characters
+            if (includeCharacters == true) {
+                List<string> IDs = events.Select(iter => iter.AttackerCharacterID).Distinct().ToList();
+                IDs.AddRange(events.Select(iter => iter.KilledCharacterID).Distinct());
+                block.Characters = await _CharacterRepository.GetByIDs(IDs, CensusEnvironment.PC);
+            }
+
+            // load items
+            if (includeWeapons == true) {
+                IEnumerable<int> itemIDs = events.Select(iter => iter.WeaponID).Distinct();
+                block.Weapons = await _ItemRepository.GetByIDs(itemIDs);
+            }
+
+            // load fire modes
+            if (includeFireModes == true) {
+                IEnumerable<int> fireModeIDs = events.Select(iter => iter.AttackerFireModeID).Distinct();
+                block.FireModes = await _FireGroupToFireModeRepository.GetByFireModes(fireModeIDs);
+            }
+
+            // load item categories
+            if (includeItemCategories == true) {
+                IEnumerable<int> categoryIDs = block.Weapons.Select(iter => iter.CategoryID).Distinct();
+                block.ItemCategories = await _ItemCategoryRepository.GetByIDs(categoryIDs);
+            }
+
+            return ApiOk(block);
+        }
+
+        /// <summary>
         ///     Get the weapons a PC character has used in the last 2 hours
         /// </summary>
         /// <remarks>

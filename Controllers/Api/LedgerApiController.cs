@@ -60,12 +60,13 @@ namespace watchtower.Controllers.Api {
         /// </response>
         [HttpGet]
         public async Task<ApiResponse<List<FacilityControlEntry>>> GetAll(
-                [FromQuery] uint? zoneID = null,
-                [FromQuery] List<short>? worldID = null,
-                [FromQuery] int? playerThreshold = null,
-                [FromQuery] long? periodStart = null,
-                [FromQuery] long? periodEnd = null,
-                [FromQuery] int? unstableState = null) {
+            [FromQuery] uint? zoneID = null,
+            [FromQuery] List<short>? worldID = null,
+            [FromQuery] int? playerThreshold = null,
+            [FromQuery] long? periodStart = null,
+            [FromQuery] long? periodEnd = null,
+            [FromQuery] int? unstableState = null
+        ) {
 
             FacilityControlOptions parameters = new();
             parameters.ZoneID = zoneID;

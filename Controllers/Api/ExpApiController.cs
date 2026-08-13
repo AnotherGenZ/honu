@@ -165,11 +165,75 @@ namespace watchtower.Controllers {
                 return ApiBadRequest<ExperienceBlock>($"{nameof(start)} must come before ${nameof(end)}");
             }
 
-            ExperienceBlock block = await _GetExpBlock(charID, start, end, includeCharacters, includeExpTypes, interestedEvents, false);
+            ExperienceBlock block = await _GetExpBlock([charID], start, end, includeCharacters, includeExpTypes, interestedEvents, false);
             return ApiOk(block);
         }
 
-        private async Task<ExperienceBlock> _GetExpBlock(string charID,
+        /// <summary>
+        ///     Get the <see cref="ExpEvent"/>s characters earned between a period.
+        ///     See remarks for more information
+        /// </summary>
+        /// <remarks>
+        ///     This response is in a "block" form, where all the possible joins/resolves one would want to do is included in the response.
+        ///     For example, if you wanted to match the <see cref="ExpEvent.ExperienceID"/> to the <see cref="ExperienceType"/>,
+        ///     you would use <see cref="ExperienceBlock.ExperienceTypes"/>, which is a list of all <see cref="ExperienceType"/>s
+        ///     that occured for all events. 
+        ///     <br/>
+        ///     The following is available in the block:
+        ///     <ul>
+        ///         <li><see cref="ExperienceBlock.Characters"/>: All the characters that were the source or other id of the exp event</li>
+        ///         <li><see cref="ExperienceBlock.ExperienceTypes"/>: All the experience definitions that occured</li>
+        ///     </ul>
+        ///     This is different from <see cref="GetByCharacterIDAndRange(string, DateTime, DateTime, List{int}?)"/>, as it expands all events,
+        ///     which can lead to duplicate information. An expended events puts the resolved character alongside every event, so if someone healed
+        ///     someone else 10 times, that single character would be included 10 times. Instead, in block form, all those characters are put
+        ///     into a list, and are joined on the recievers end
+        /// </remarks>
+        /// <param name="charIDs">list of character IDs to get the events of. max 50</param>
+        /// <param name="start">When the interested period starts</param>
+        /// <param name="end">When the interested period ends</param>
+        /// <param name="includeCharacters">If the <see cref="ExperienceBlock.Characters"/> will be populated. Defaults to false</param>
+        /// <param name="includeExpTypes">If the <see cref="ExperienceBlock.ExperienceTypes"/> will be populated. Defaults to false</param>
+        /// <param name="interestedEvents">If provided, a filter of what events are included in the response. Leave empty for all events</param>
+        /// <response code="200">
+        ///     The response will contain a <see cref="ExperienceBlock"/>, that contains all the events requested as well as the information
+        ///     that would be useful for resolving IDs (such as characters)
+        /// </response>
+        /// <response code="400">
+        ///     One of the following validation errors occured:
+        ///     <ul>
+        ///         <li><paramref name="end"/> comes before <paramref name="start"/></li>
+        ///         <li><paramref name="start"/> and <paramref name="end"/> are more than 24 hours apart</li>
+        ///     </ul>
+        /// </response>
+        [HttpGet("characters")]
+        public async Task<ApiResponse<ExperienceBlock>> GetByCharacterIDsInRange(
+            [FromQuery] List<string> charIDs,
+            [FromQuery] DateTime start, [FromQuery] DateTime end,
+            [FromQuery] bool? includeCharacters = false,
+            [FromQuery] bool? includeExpTypes = true,
+            [FromQuery] List<int>? interestedEvents = null
+        ) {
+
+            if (charIDs.Count == 0) {
+                return ApiBadRequest<ExperienceBlock>($"{nameof(charIDs)} must have at least 1 entry");
+            }
+            if (charIDs.Count > 50) {
+                return ApiBadRequest<ExperienceBlock>($"{nameof(charIDs)} cannot have more than 50 entries");
+            }
+
+            if (end - start > TimeSpan.FromDays(1)) {
+                return ApiBadRequest<ExperienceBlock>($"{nameof(start)} and {nameof(end)} cannot have more than a 24 hour difference");
+            }
+            if (start >= end) {
+                return ApiBadRequest<ExperienceBlock>($"{nameof(start)} must come before ${nameof(end)}");
+            }
+
+            ExperienceBlock block = await _GetExpBlock(charIDs, start, end, includeCharacters, includeExpTypes, interestedEvents, false);
+            return ApiOk(block);
+        }
+
+        private async Task<ExperienceBlock> _GetExpBlock(List<string> charIDs,
             DateTime start, DateTime end,
             bool? includeCharacters = true, bool? includeExpTypes = true,
             List<int>? interestedEvents = null, bool? useOther = false) {
@@ -183,28 +247,28 @@ namespace watchtower.Controllers {
 
             // 
             List<ExpEvent> events = (useOther == true)
-                ? await _ExpDbStore.GetOtherByCharacterIDs([charID], start, end)
-                : await _ExpDbStore.GetByCharacterID(charID, start, end);
+                ? await _ExpDbStore.GetOtherByCharacterIDs(charIDs, start, end)
+                : await _ExpDbStore.GetByCharacterIDs(charIDs, start, end);
 
             if (interestedEvents != null && interestedEvents.Count > 0) {
-                _Logger.LogDebug($"filtering exp events [charID={charID}] [start={start:u}] [end={end:u}] [events={string.Join(", ", interestedEvents)}]");
+                _Logger.LogDebug($"filtering exp events [start={start:u}] [end={end:u}] [events={string.Join(", ", interestedEvents)}]");
                 events = events.Where(iter => interestedEvents.IndexOf(iter.ExperienceID) > -1).ToList();
             }
 
             ExperienceBlock block = new ExperienceBlock();
             block.Events = events;
-            block.InputCharacters = new() { charID };
+            block.InputCharacters = charIDs;
             block.PeriodStart = start;
             block.PeriodEnd = end;
 
-            HashSet<string> charIDs = new();
+            HashSet<string> setCharIDs = new();
             HashSet<int> expTypeIDs = new();
 
             if (includeCharacters == true || includeExpTypes == true) {
                 foreach (ExpEvent ev in events) {
-                    charIDs.Add(ev.SourceID);
+                    setCharIDs.Add(ev.SourceID);
                     if (ev.OtherID.Length == 19) {
-                        charIDs.Add(ev.OtherID);
+                        setCharIDs.Add(ev.OtherID);
                     }
 
                     expTypeIDs.Add(ev.ExperienceID);
@@ -212,7 +276,7 @@ namespace watchtower.Controllers {
             }
 
             if (includeCharacters == true) {
-                List<PsCharacter> chars = await _CharacterRepository.GetByIDs(charIDs, CensusEnvironment.PC, fast: true);
+                List<PsCharacter> chars = await _CharacterRepository.GetByIDs(setCharIDs, CensusEnvironment.PC, fast: true);
                 block.Characters = chars;
             }
 
@@ -272,7 +336,7 @@ namespace watchtower.Controllers {
                 return ApiNotFound<ExperienceBlock>($"{nameof(Session)} {sessionID}");
             }
 
-            ExperienceBlock block = await _GetExpBlock(session.CharacterID, session.Start, session.End ?? DateTime.UtcNow, true, true, useOther: true);
+            ExperienceBlock block = await _GetExpBlock([session.CharacterID], session.Start, session.End ?? DateTime.UtcNow, true, true, useOther: true);
             return ApiOk(block);
         }
 
